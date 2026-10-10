@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Gradient Player</title>
+<meta name="description" content="A touch instrument: slide your finger across a colour gradient to play.">
+<meta name="theme-color" content="#050505">
+
+<!-- Home Screen / installable web app -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gradient">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<canvas id="surface"></canvas>
+<canvas id="note-guide"></canvas>
+<div id="overlay"></div>
+<div id="safe-probe" aria-hidden="true"></div>
+
+<div id="hint"></div>
+
+<!-- EVALUATION SWITCH (remove with the losing preset once chosen): quick Guided / Free toggle -->
+<div id="style-switch" role="group" aria-label="Play style">
+  <button type="button" data-style="guided">Guided</button>
+  <button type="button" data-style="free">Free</button>
+</div>
+
+<button id="gear" type="button" aria-label="Settings" aria-expanded="false" aria-controls="panel">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="3"></circle>
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+  </svg>
+</button>
+
+<div id="panel" aria-label="Settings">
+  <!-- EVALUATION SWITCH: remove with the losing preset once chosen -->
+  <div class="row" id="style-row">
+    <div class="label">Play style</div>
+    <div class="segmented" id="style-seg">
+      <button type="button" data-v="guided">Guided</button>
+      <button type="button" data-v="free">Free glide</button>
+    </div>
+    <div class="note" id="style-note"></div>
+  </div>
+
+  <div class="row">
+    <div class="label">Surface</div>
+    <div class="segmented" id="surface-seg">
+      <button type="button" data-v="gradient">Gradient</button>
+      <button type="button" data-v="piano">Piano</button>
+    </div>
+  </div>
+
+  <div class="row" id="wave-row">
+    <div class="label">Waveform</div>
+    <div class="segmented" id="wave-seg">
+      <button type="button" data-v="sine">Sine</button>
+      <button type="button" data-v="triangle">Tri</button>
+      <button type="button" data-v="sawtooth">Saw</button>
+      <button type="button" data-v="square">Sqr</button>
+    </div>
+  </div>
+
+  <div class="row toggle-row" id="snap-row">
+    <div class="label">Snap to scale</div>
+    <button type="button" class="switch" id="snap-switch" role="switch" aria-label="Snap to scale"></button>
+  </div>
+
+  <div class="row" id="scale-row">
+    <div class="label">Scale</div>
+    <select id="scale-select" aria-label="Scale">
+      <option value="majPent">Major pentatonic</option>
+      <option value="minPent">Minor pentatonic</option>
+      <option value="major">Major (7-note)</option>
+      <option value="minor">Minor (7-note)</option>
+      <option value="chromatic">Chromatic (all 12)</option>
+    </select>
+  </div>
+
+  <div class="row toggle-row">
+    <div class="label">Note guide</div>
+    <button type="button" class="switch" id="guide-switch" role="switch" aria-label="Note guide"></button>
+  </div>
+
+  <div class="row" id="color-row">
+    <div class="label">Color mapping</div>
+    <div class="segmented" id="color-seg">
+      <button type="button" data-v="sweep">Sweep</button>
+      <button type="button" data-v="repeat">Repeat</button>
+    </div>
+  </div>
+
+  <div class="row" id="bend-row">
+    <div class="label">Vertical pitch bend</div>
+    <input type="range" id="bend-slider" min="0" max="24" step="1" aria-label="Vertical pitch bend">
+    <div class="note center mono" id="bend-label"></div>
+  </div>
+
+  <div class="row" id="range-row">
+    <div class="label">Range (octaves, centred on C4)</div>
+    <input type="range" id="range-slider" min="1" max="4" step="1" aria-label="Range in octaves">
+    <div class="note center mono" id="range-label"></div>
+  </div>
+
+  <div class="row">
+    <div class="label">Volume</div>
+    <input type="range" id="vol-slider" min="0" max="1" step="0.01" aria-label="Volume">
+  </div>
+
+  <div class="section-header">Effects</div>
+  <div id="effects"></div>
+</div>
+
+<!-- iOS only lets a user gesture start audio, and silences it again after interruptions -->
+<div id="start">
+  <div class="start-card">
+    <div class="start-title">Gradient Player</div>
+    <div class="start-sub">Touch and slide across the colours to play. Use two fingers for a chord.</div>
+    <button type="button" id="start-btn">Tap to start</button>
+    <div class="start-note">Turn your volume up.</div>
+  </div>
+</div>
+
+<noscript><p style="color:#fff;padding:24px;font-family:sans-serif">Gradient Player needs JavaScript.</p></noscript>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,1751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Gradient Synth</title>
+<style>
+  :root {
+    --bg: #050505;
+    --ink: rgba(255,255,255,0.92);
+    --ink-dim: rgba(255,255,255,0.45);
+    --panel-bg: rgba(10,10,12,0.72);
+    --panel-border: rgba(255,255,255,0.10);
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    touch-action: none;
+    overscroll-behavior: none;
+    user-select: none;
+  }
+
+  #surface {
+    position: fixed;
+    inset: 0;
+    touch-action: none;
+  }
+
+  #note-guide {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  #overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  /* readouts near each finger */
+  .readout {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: none;
+  }
+  .readout .note {
+    font-family: "SF Mono", "Menlo", ui-monospace, monospace;
+    font-size: 15px;
+    letter-spacing: 0.04em;
+    color: rgba(0,0,0,0.82);
+    text-shadow: 0 0 10px rgba(255,255,255,0.35);
+    font-weight: 600;
+  }
+  .readout .hz {
+    font-family: "SF Mono", "Menlo", ui-monospace, monospace;
+    font-size: 10px;
+    color: rgba(0,0,0,0.55);
+    margin-top: 1px;
+  }
+  .readout .ring {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(0,0,0,0.35);
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%,-50%);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%   { transform: translate(-50%,-50%) scale(0.9); opacity: 0.65; }
+    70%  { transform: translate(-50%,-50%) scale(1.7); opacity: 0; }
+    100% { opacity: 0; }
+  }
+
+  /* top-level mode switcher */
+  #mode-switch {
+    position: fixed;
+    top: max(14px, env(safe-area-inset-top));
+    left: max(14px, env(safe-area-inset-left));
+    z-index: 25;
+    display: flex;
+    background: rgba(0,0,0,0.35);
+    backdrop-filter: blur(8px);
+    border-radius: 20px;
+    padding: 3px;
+    gap: 2px;
+    pointer-events: auto;
+  }
+  #mode-switch button {
+    border: none;
+    background: transparent;
+    color: rgba(255,255,255,0.55);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 14px;
+    border-radius: 16px;
+    font-family: -apple-system, sans-serif;
+  }
+  #mode-switch button.active {
+    background: rgba(255,255,255,0.92);
+    color: #111;
+  }
+
+  /* Play-mode HUD */
+  #game-hud {
+    position: fixed;
+    top: max(60px, calc(env(safe-area-inset-top) + 60px));
+    left: 0; right: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    pointer-events: none;
+    z-index: 15;
+  }
+  #game-hud.visible { display: flex; }
+  #game-lives {
+    display: flex;
+    gap: 6px;
+  }
+  #game-lives .life {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: #ff4d4d;
+    box-shadow: 0 0 4px rgba(255,77,77,0.8);
+  }
+  #game-lives .life.lost {
+    background: rgba(255,255,255,0.15);
+    box-shadow: none;
+  }
+  #game-level-name {
+    font-family: -apple-system, sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    color: rgba(255,255,255,0.75);
+    text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+  }
+
+  /* Play-mode overlay (game over / level complete / victory) */
+  #game-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(5,5,8,0.88);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    z-index: 30;
+    pointer-events: auto;
+    text-align: center;
+    padding: 0 32px;
+  }
+  #game-overlay.visible { display: flex; }
+  #game-overlay-title {
+    font-family: -apple-system, sans-serif;
+    font-size: 26px;
+    font-weight: 700;
+    color: white;
+  }
+  #game-overlay-sub {
+    font-family: -apple-system, sans-serif;
+    font-size: 14px;
+    color: rgba(255,255,255,0.6);
+    margin-bottom: 14px;
+  }
+  #game-overlay-btn {
+    border: none;
+    background: white;
+    color: #111;
+    font-family: -apple-system, sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    padding: 12px 28px;
+    border-radius: 24px;
+  }
+
+  /* corner toggle */
+  #gear {
+    position: fixed;
+    top: max(14px, env(safe-area-inset-top));
+    right: max(14px, env(safe-area-inset-right));
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.28);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+    pointer-events: auto;
+  }
+  #gear svg { width: 18px; height: 18px; opacity: 0.85; }
+
+  #panel {
+    position: fixed;
+    right: max(14px, env(safe-area-inset-right));
+    top: max(60px, calc(env(safe-area-inset-top) + 60px));
+    width: 232px;
+    max-height: calc(100vh - 80px - env(safe-area-inset-bottom));
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(14px);
+    border-radius: 14px;
+    padding: 14px 14px 10px;
+    z-index: 20;
+    pointer-events: auto;
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    visibility: hidden;
+  }
+  #panel.open {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    visibility: visible;
+  }
+
+  .row {
+    margin-bottom: 12px;
+  }
+  .row:last-child { margin-bottom: 4px; }
+  .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-dim);
+    margin-bottom: 6px;
+    font-weight: 600;
+  }
+
+  .segmented {
+    display: flex;
+    background: rgba(255,255,255,0.06);
+    border-radius: 8px;
+    padding: 2px;
+    gap: 2px;
+  }
+  .segmented button {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--ink-dim);
+    font-size: 11px;
+    padding: 6px 2px;
+    border-radius: 6px;
+    font-family: inherit;
+  }
+  .segmented button.active {
+    background: rgba(255,255,255,0.16);
+    color: var(--ink);
+  }
+
+  input[type="range"] {
+    width: 100%;
+    accent-color: #ffffff;
+  }
+
+  select, input[type="text"] {
+    width: 100%;
+    background: rgba(255,255,255,0.06);
+    color: var(--ink);
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-family: inherit;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .toggle-row .label { margin-bottom: 0; }
+
+  .section-header {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: rgba(255,255,255,0.35);
+    font-weight: 700;
+    padding-top: 10px;
+    margin-bottom: 8px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+  .section-header:first-child { border-top: none; padding-top: 0; }
+
+  .switch {
+    width: 38px;
+    height: 22px;
+    border-radius: 11px;
+    background: rgba(255,255,255,0.14);
+    position: relative;
+    flex-shrink: 0;
+  }
+  .switch::after {
+    content: "";
+    position: absolute;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: white;
+    top: 2px; left: 2px;
+    transition: left 0.16s ease;
+  }
+  .switch.on { background: rgba(255,255,255,0.55); }
+  .switch.on::after { left: 18px; }
+
+  #hint {
+    position: fixed;
+    left: 50%;
+    bottom: max(28px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    color: rgba(0,0,0,0.5);
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+    text-align: center;
+    font-family: -apple-system, sans-serif;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="surface"></canvas>
+<canvas id="note-guide"></canvas>
+<div id="overlay"></div>
+
+<div id="hint">touch and drag to play &middot; slide vertically to bend pitch &middot; two fingers for a chord</div>
+
+<div id="mode-switch">
+  <button data-mode="explore" class="active">Explore</button>
+  <button data-mode="play">Play</button>
+</div>
+
+<div id="game-hud">
+  <div id="game-lives"></div>
+  <div id="game-level-name"></div>
+</div>
+
+<div id="game-overlay">
+  <div id="game-overlay-title"></div>
+  <div id="game-overlay-sub"></div>
+  <button id="game-overlay-btn"></button>
+</div>
+
+<div id="gear">
+  <svg viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="3"></circle>
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+  </svg>
+</div>
+
+<div id="panel">
+  <div class="row" id="wave-row">
+    <div class="label">Waveform</div>
+    <div class="segmented" id="wave-seg">
+      <button data-v="sine" class="active">Sine</button>
+      <button data-v="triangle">Tri</button>
+      <button data-v="sawtooth">Saw</button>
+      <button data-v="square">Sqr</button>
+    </div>
+  </div>
+
+  <div class="row toggle-row" id="snap-row">
+    <div class="label">Snap to scale</div>
+    <div class="switch on" id="snap-switch"></div>
+  </div>
+
+  <div class="row toggle-row">
+    <div class="label">Note guide</div>
+    <div class="switch on" id="guide-switch"></div>
+  </div>
+
+  <div class="row" id="scale-row">
+    <div class="label">Scale</div>
+    <select id="scale-select">
+      <option value="majPent" selected>Major pentatonic</option>
+      <option value="minPent">Minor pentatonic</option>
+      <option value="major">Major (7-note)</option>
+      <option value="minor">Minor (7-note)</option>
+      <option value="chromatic">Chromatic (all 12)</option>
+    </select>
+  </div>
+
+  <div class="row" id="color-row">
+    <div class="label">Color mapping</div>
+    <div class="segmented" id="color-seg">
+      <button data-v="sweep" class="active">Sweep</button>
+      <button data-v="repeat">Repeat</button>
+    </div>
+  </div>
+
+  <div class="row" id="bend-row">
+    <div class="label">Vertical pitch bend</div>
+    <input type="range" id="bend-slider" min="0" max="24" step="1" value="12">
+    <div id="bend-label" style="font-family:'SF Mono',Menlo,ui-monospace,monospace;font-size:10px;color:var(--ink-dim);margin-top:4px;text-align:center;"></div>
+  </div>
+
+  <div class="row">
+    <div class="label">Range mode</div>
+    <div class="segmented" id="rangemode-seg">
+      <button data-v="centered" class="active">Centered/C4</button>
+      <button data-v="piano">Full piano</button>
+    </div>
+  </div>
+
+  <div class="row" id="range-row">
+    <div class="label">Range (octaves, centered on C4)</div>
+    <input type="range" id="range-slider" min="1" max="4" step="1" value="3">
+    <div id="range-label" style="font-family:'SF Mono',Menlo,ui-monospace,monospace;font-size:10px;color:var(--ink-dim);margin-top:4px;text-align:center;"></div>
+  </div>
+
+  <div class="row">
+    <div class="label">Volume</div>
+    <input type="range" id="vol-slider" min="0" max="1" step="0.01" value="0.6">
+  </div>
+
+  <div class="section-header">Effects</div>
+
+  <div class="row toggle-row">
+    <div class="label">Distortion</div>
+    <div class="switch" id="fx-distortion-switch"></div>
+  </div>
+  <div class="row toggle-row">
+    <div class="label">Vibrato</div>
+    <div class="switch" id="fx-vibrato-switch"></div>
+  </div>
+  <div class="row toggle-row">
+    <div class="label">Chorus</div>
+    <div class="switch" id="fx-chorus-switch"></div>
+  </div>
+  <div class="row toggle-row">
+    <div class="label">Phaser</div>
+    <div class="switch" id="fx-phaser-switch"></div>
+  </div>
+  <div class="row toggle-row">
+    <div class="label">Tremolo</div>
+    <div class="switch" id="fx-tremolo-switch"></div>
+  </div>
+  <div class="row toggle-row">
+    <div class="label">Delay / echo</div>
+    <div class="switch" id="fx-delay-switch"></div>
+  </div>
+  <div class="row toggle-row">
+    <div class="label">Reverb</div>
+    <div class="switch" id="fx-reverb-switch"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------- constants ----------
+  const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  const C0_FREQ = 16.3516; // C0, the universal zero reference in Scientific Pitch Notation
+  const CENTER_ABS_SEMI = 48; // C4 ("middle C") — 48 semitones above C0
+  const SCALES = {
+    majPent: [0,2,4,7,9],
+    minPent: [0,3,5,7,10],
+    major: [0,2,4,5,7,9,11],
+    minor: [0,2,3,5,7,8,10],
+    chromatic: [0,1,2,3,4,5,6,7,8,9,10,11]
+  };
+
+  // a small library of traditional/public-domain melodies for Song mode —
+  // a small library of traditional/public-domain melodies for Song mode.
+  // Each note is "NOTE" or "NOTE:beat" (beat defaults to 1 — a quarter
+  // note; 2 = held twice as long, 0.5 = a quick eighth note). "R" is a
+  // rest — a silent gap with nothing to press, which auto-advances on
+  // its own after its time passes rather than waiting for a keypress,
+  // since there's no note to match. A brief R:1 sits at the end of each
+  // song as a breath before it loops back to the start.
+  const SONGS = {
+    twinkle: {
+      name: "Twinkle Twinkle Little Star",
+      notes: "C4 C4 G4 G4 A4 A4 G4:2 F4 F4 E4 E4 D4 D4 C4:2 " +
+             "G4 G4 F4 F4 E4 E4 D4:2 G4 G4 F4 F4 E4 E4 D4:2 " +
+             "C4 C4 G4 G4 A4 A4 G4:2 F4 F4 E4 E4 D4 D4 C4:2 R:1"
+    },
+    mary: {
+      name: "Mary Had a Little Lamb",
+      notes: "E4 D4 C4 D4 E4 E4 E4:2 D4 D4 D4:2 E4 G4 G4:2 " +
+             "E4 D4 C4 D4 E4 E4 E4 E4 D4 D4 E4 D4 C4:2 R:1"
+    },
+    ode: {
+      name: "Ode to Joy (opening)",
+      notes: "E4 E4 F4 G4 G4 F4 E4 D4 C4 C4 D4 E4 E4 D4 D4:2 R:1"
+    },
+    frere: {
+      name: "Fr\u00e8re Jacques",
+      notes: "C4 D4 E4 C4 C4 D4 E4 C4 E4 F4 G4:2 E4 F4 G4:2 " +
+             "G4:0.5 A4:0.5 G4:0.5 F4:0.5 E4 C4 G4:0.5 A4:0.5 G4:0.5 F4:0.5 E4 C4 " +
+             "C4 G3 C4:2 C4 G3 C4:2 R:1"
+    },
+    hotcross: {
+      name: "Hot Cross Buns",
+      notes: "E4 D4 C4:2 E4 D4 C4:2 C4 C4 C4 C4 D4 D4 D4 D4 E4 D4 C4:2 R:1"
+    },
+    jingle: {
+      name: "Jingle Bells (opening)",
+      notes: "E4 E4 E4:2 E4 E4 E4:2 E4 G4 C4 D4 E4:4 R:1"
+    }
+  };
+
+  let state = {
+    appMode: "explore", // "explore" (gradient/piano sandbox) or "play" (Game mode, levels)
+    waveform: "sine",
+    snap: true,
+    scale: "majPent",
+    octaves: 3,
+    volume: 0.6,
+    colorMode: "sweep", // "sweep" or "repeat"
+    noteGuide: true,
+    rangeMode: "centered", // "centered" (around C4) or "piano" (A0-C8)
+    bendRange: 12, // semitones of vertical pitch bend, gradient mode only (0 = off)
+    effects: { distortion: false, vibrato: false, chorus: false, phaser: false, tremolo: false, delay: false, reverb: false },
+    game: { active: false, levelIndex: 0, lives: 3, notes: [], noteIndex: 0, target: null, windowStart: 0 }
+  };
+
+  // ---------- audio ----------
+  let ctx = null;
+  let masterGain = null;
+  const voices = new Map(); // pointerId -> {osc, gain, filter}
+
+  // ---------- effects chain ----------
+  // Applies globally to everything that reaches masterGain — both the
+  // gradient's voices and the piano's voices connect there, so effects
+  // work in either mode without extra wiring.
+  //
+  // Each effect is an "insert": the signal splits into a dry path and a
+  // wet (processed) path, which get summed back together. Some effects
+  // (distortion, vibrato, tremolo) fully replace the dry signal when on,
+  // since that's how those are normally heard (a distortion pedal doesn't
+  // leave a clean signal underneath it, and vibrato with the dry pitch
+  // still audible just sounds like chorus instead). Others (chorus,
+  // phaser, delay, reverb) blend wet on top of dry, which is how those
+  // are conventionally used.
+  const EFFECT_CONFIG = {
+    distortion: { mode: "replace", wet: 0.9 },
+    vibrato:    { mode: "replace", wet: 0.95 },
+    chorus:     { mode: "blend",   wet: 0.5 },
+    phaser:     { mode: "blend",   wet: 0.55 },
+    tremolo:    { mode: "replace", wet: 1.0 },
+    delay:      { mode: "blend",   wet: 0.35 },
+    reverb:     { mode: "blend",   wet: 0.3 }
+  };
+  const fx = {}; // name -> { setOn(bool) }
+
+  function createInsert(input, buildWetChain, mode) {
+    const dry = ctx.createGain();
+    const wet = ctx.createGain();
+    const sum = ctx.createGain();
+    wet.gain.value = 0;
+    input.connect(dry);
+    dry.connect(sum);
+    const wetChainOutput = buildWetChain(input);
+    wetChainOutput.connect(wet);
+    wet.connect(sum);
+    return {
+      output: sum,
+      setOn(on, wetAmount) {
+        const now = ctx.currentTime;
+        if (mode === "replace") dry.gain.setTargetAtTime(on ? 0 : 1, now, 0.05);
+        wet.gain.setTargetAtTime(on ? wetAmount : 0, now, 0.05);
+      }
+    };
+  }
+
+  function buildDistortion(input) {
+    const shaper = ctx.createWaveShaper();
+    const n = 44100;
+    const curve = new Float32Array(n);
+    const amount = 35;
+    for (let i = 0; i < n; i++) {
+      const x = (i * 2) / n - 1;
+      curve[i] = ((3 + amount) * x * (20 * Math.PI / 180)) / (Math.PI + amount * Math.abs(x));
+    }
+    shaper.curve = curve;
+    shaper.oversample = "2x";
+    input.connect(shaper);
+    return shaper;
+  }
+
+  function buildVibrato(input) {
+    // a short delay whose length is itself wiggling creates a Doppler-like
+    // pitch wobble — the same building block chorus and flanger use, just
+    // with a shorter delay and (via "replace" mode above) no dry signal
+    const delay = ctx.createDelay(0.05);
+    delay.delayTime.value = 0.006;
+    const lfo = ctx.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.value = 5.5;
+    const depth = ctx.createGain();
+    depth.gain.value = 0.0028;
+    lfo.connect(depth);
+    depth.connect(delay.delayTime);
+    lfo.start();
+    input.connect(delay);
+    return delay;
+  }
+
+  function buildChorus(input) {
+    // same technique as vibrato, but longer delay + slower LFO + blended
+    // with the dry signal, so you hear the original plus a detuned double
+    const delay = ctx.createDelay(0.05);
+    delay.delayTime.value = 0.022;
+    const lfo = ctx.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.value = 0.8;
+    const depth = ctx.createGain();
+    depth.gain.value = 0.004;
+    lfo.connect(depth);
+    depth.connect(delay.delayTime);
+    lfo.start();
+    input.connect(delay);
+    return delay;
+  }
+
+  function buildPhaser(input) {
+    // a chain of allpass filters whose center frequency sweeps together,
+    // blended with dry — the moving notches create the classic "whoosh"
+    const stages = 4;
+    const lfo = ctx.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.value = 0.35;
+    const depth = ctx.createGain();
+    depth.gain.value = 700;
+    lfo.connect(depth);
+    let node = input;
+    for (let i = 0; i < stages; i++) {
+      const ap = ctx.createBiquadFilter();
+      ap.type = "allpass";
+      ap.frequency.value = 700;
+      depth.connect(ap.frequency);
+      node.connect(ap);
+      node = ap;
+    }
+    lfo.start();
+    return node;
+  }
+
+  function buildTremolo(input) {
+    // an LFO drives this stage's own gain between 0 and 1 — since
+    // "replace" mode drops the dry signal, this is all you hear,
+    // producing the classic pulse from full volume down to near-silence
+    const lfo = ctx.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.value = 5;
+    const depth = ctx.createGain();
+    depth.gain.value = 0.5;
+    const trGain = ctx.createGain();
+    trGain.gain.value = 0.5;
+    lfo.connect(depth);
+    depth.connect(trGain.gain);
+    lfo.start();
+    input.connect(trGain);
+    return trGain;
+  }
+
+  function buildDelay(input) {
+    const delay = ctx.createDelay(1.0);
+    delay.delayTime.value = 0.28;
+    const feedback = ctx.createGain();
+    feedback.gain.value = 0.35;
+    input.connect(delay);
+    delay.connect(feedback);
+    feedback.connect(delay);
+    return delay;
+  }
+
+  function buildReverb(input) {
+    // a synthetic impulse response (decaying noise) rather than a loaded
+    // audio file, so the whole instrument stays a single self-contained page
+    const duration = 2.5, decay = 3.2;
+    const rate = ctx.sampleRate;
+    const length = Math.floor(rate * duration);
+    const impulse = ctx.createBuffer(2, length, rate);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = impulse.getChannelData(ch);
+      for (let i = 0; i < length; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+      }
+    }
+    const convolver = ctx.createConvolver();
+    convolver.buffer = impulse;
+    input.connect(convolver);
+    return convolver;
+  }
+
+  function buildEffectsChain() {
+    let node = masterGain;
+    const order = [
+      ["distortion", buildDistortion],
+      ["vibrato", buildVibrato],
+      ["chorus", buildChorus],
+      ["phaser", buildPhaser],
+      ["tremolo", buildTremolo],
+      ["delay", buildDelay],
+      ["reverb", buildReverb]
+    ];
+    order.forEach(([name, buildFn]) => {
+      const cfg = EFFECT_CONFIG[name];
+      const insert = createInsert(node, buildFn, cfg.mode);
+      insert.setOn(state.effects[name], cfg.wet); // honor any pre-touch toggle
+      fx[name] = insert;
+      node = insert.output;
+    });
+    const comp = ctx.createDynamicsCompressor();
+    node.connect(comp);
+    comp.connect(ctx.destination);
+  }
+
+  function ensureAudio() {
+    if (ctx) return;
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = ctx.createGain();
+    masterGain.gain.value = state.volume;
+    buildEffectsChain();
+  }
+
+  function absSemiRange() {
+    if (state.rangeMode === "piano") {
+      // a full 88-key concert grand: A0 to C8 — 7 octaves + a minor
+      // third, not a clean 8 octaves, and not symmetric around C4.
+      const startAbs = 9;  // A0
+      const totalSemis = 87; // up to C8 (96)
+      return { totalSemis, halfSemis: totalSemis / 2, startAbs };
+    }
+    // "centered" mode: symmetric around C4 (middle C). octaves*12 is
+    // always even, and half of it is always a whole number of semitones
+    // (though not always a whole number of octaves — 3 octaves means
+    // 1.5 octaves each direction, and the edges land on a non-C note).
+    const totalSemis = state.octaves * 12;
+    const halfSemis = totalSemis / 2;
+    const startAbs = CENTER_ABS_SEMI - halfSemis;
+    return { totalSemis, halfSemis, startAbs };
+  }
+
+  function absSemiFromT(t) {
+    const { totalSemis, startAbs } = absSemiRange();
+    return startAbs + t * totalSemis;
+  }
+
+  function getScaleNotesInRange() {
+    // flat, ascending list of every absolute semitone (from C0) that
+    // belongs to the active scale, across the whole visible range —
+    // shared by both the audio snapping and the visual overlay so the
+    // two can never drift apart.
+    const scale = SCALES[state.scale];
+    const { totalSemis, startAbs } = absSemiRange();
+    const notes = [];
+    for (let i = 0; i <= totalSemis; i++) {
+      const absSemi = startAbs + i;
+      const within = ((absSemi % 12) + 12) % 12;
+      if (scale.includes(within)) notes.push(absSemi);
+    }
+    return notes;
+  }
+
+  function freqFromT(t) {
+    let absSemi = absSemiFromT(t);
+    if (state.snap) {
+      const notes = getScaleNotesInRange();
+      let best = notes[0], bestDist = Infinity;
+      for (const n of notes) {
+        const d = Math.abs(n - absSemi);
+        if (d < bestDist) { bestDist = d; best = n; }
+      }
+      absSemi = best;
+    }
+    const freq = C0_FREQ * Math.pow(2, absSemi / 12);
+    return { freq, absSemi };
+  }
+
+  function bendSemisFromY(y, h) {
+    // +1 at the very top, -1 at the very bottom, 0 at vertical center —
+    // then scaled by however many semitones of bend range are dialed in.
+    const norm = clamp((h / 2 - y) / (h / 2), -1, 1);
+    return norm * state.bendRange;
+  }
+
+  function pitchFromXY(x, y, w, h) {
+    // X still picks the note (through scale/snap, same as freqFromT alone).
+    // Y then bends continuously away from that note — a mod-wheel-style
+    // effect layered on top, not a replacement for the X mapping.
+    const t = clamp(x / w, 0, 1);
+    const { absSemi: noteSemi } = freqFromT(t);
+    const bend = bendSemisFromY(y, h);
+    const freq = C0_FREQ * Math.pow(2, (noteSemi + bend) / 12);
+    return { freq, absSemi: noteSemi, bend };
+  }
+
+  function noteNameFromSemis(semis) {
+    const rounded = Math.round(semis);
+    const idx = ((rounded % 12) + 12) % 12;
+    const octave = Math.floor(rounded / 12);
+    return NOTE_NAMES[idx] + octave;
+  }
+
+  const LETTER_PC = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+  function parseNoteName(str) {
+    // "C4", "F#3", "Bb5" -> absolute semitone from C0, or null if unparseable
+    const m = /^([A-Ga-g])([#b]?)(-?\d+)$/.exec(str.trim());
+    if (!m) return null;
+    let pc = LETTER_PC[m[1].toUpperCase()];
+    if (m[2] === "#") pc += 1;
+    if (m[2] === "b") pc -= 1;
+    pc = ((pc % 12) + 12) % 12;
+    return parseInt(m[3], 10) * 12 + pc;
+  }
+
+  function startVoice(id, x, y, w, h) {
+    ensureAudio();
+    if (ctx.state === "suspended") ctx.resume();
+
+    const { freq } = pitchFromXY(x, y, w, h);
+    const brightness = 1 - clamp(y / h, 0, 1); // top = bright (unchanged, independent of bend)
+
+    const osc = ctx.createOscillator();
+    osc.type = state.waveform;
+    osc.frequency.value = freq;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.Q.value = 0.7;
+    filter.frequency.value = 300 + brightness * 7000;
+
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(masterGain);
+    osc.start();
+
+    const now = ctx.currentTime;
+    gain.gain.linearRampToValueAtTime(0.28, now + 0.015);
+
+    voices.set(id, { osc, gain, filter });
+  }
+
+  function updateVoice(id, x, y, w, h) {
+    const v = voices.get(id);
+    if (!v || !ctx) return;
+    const { freq } = pitchFromXY(x, y, w, h);
+    const brightness = 1 - clamp(y / h, 0, 1);
+    const now = ctx.currentTime;
+    v.osc.frequency.setTargetAtTime(freq, now, 0.045);
+    v.filter.frequency.setTargetAtTime(300 + brightness * 7000, now, 0.06);
+  }
+
+  function stopVoice(id) {
+    const v = voices.get(id);
+    if (!v || !ctx) return;
+    const now = ctx.currentTime;
+    v.gain.gain.cancelScheduledValues(now);
+    v.gain.gain.setTargetAtTime(0, now, 0.06);
+    v.osc.stop(now + 0.4);
+    voices.delete(id);
+  }
+
+  // ---------- piano instrument (distinct from the gradient's sustained voices) ----------
+  // A real piano's string is struck once and then decays continuously —
+  // even while the key stays down — rather than holding at a flat level
+  // like the gradient's synth pad. Two slightly detuned oscillators give
+  // a bit of natural chorus/beating, and the lowpass filter starts bright
+  // (hammer strike) and darkens as the note ages, the way a real
+  // soundboard's tone mellows out.
+  const pianoVoices = new Map(); // pointerId -> { absSemi, osc1, osc2, filter, gain }
+  const ringingByNote = new Map(); // absSemi -> { osc1, osc2, filter, gain } — whatever is currently sounding for that pitch, held or still fading
+
+  function startPianoVoice(id, absSemi) {
+    ensureAudio();
+    if (ctx.state === "suspended") ctx.resume();
+
+    // If this exact note is already ringing — held from another finger,
+    // or just released and still fading its 0.6s tail — cut it off fast
+    // first. Otherwise the new attack overlaps the old tail: two nearly
+    // identical waveforms summing at a near-random phase relationship is
+    // a classic source of a short click, and it's exactly what happens
+    // when the same key is struck twice quickly (e.g. a repeated note
+    // in Song mode) since each touch gets its own independent voice.
+    const prior = ringingByNote.get(absSemi);
+    if (prior) {
+      const cutNow = ctx.currentTime;
+      prior.gain.gain.cancelScheduledValues(cutNow);
+      prior.gain.gain.setTargetAtTime(0, cutNow, 0.012);
+      prior.osc1.stop(cutNow + 0.04);
+      prior.osc2.stop(cutNow + 0.04);
+    }
+
+    const freq = C0_FREQ * Math.pow(2, absSemi / 12);
+    const now = ctx.currentTime;
+
+    const osc1 = ctx.createOscillator();
+    osc1.type = "triangle";
+    osc1.frequency.value = freq;
+
+    const osc2 = ctx.createOscillator();
+    osc2.type = "sine";
+    osc2.frequency.value = freq;
+    osc2.detune.value = 6; // slight beating, like real piano string pairs
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.Q.value = 0.5;
+    filter.frequency.setValueAtTime(6500, now);
+    filter.frequency.setTargetAtTime(1100, now, 0.35); // brightness fades as the note ages
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, now);
+
+    osc1.connect(filter);
+    osc2.connect(filter);
+    filter.connect(gain);
+    gain.connect(masterGain);
+    osc1.start();
+    osc2.start();
+
+    // quick hammer-strike attack, then a real decay even while held
+    gain.gain.linearRampToValueAtTime(0.85, now + 0.008);
+    gain.gain.setTargetAtTime(0.22, now + 0.008, 0.35);
+    gain.gain.setTargetAtTime(0.05, now + 0.35, 2.2);
+
+    const voice = { absSemi, osc1, osc2, filter, gain };
+    pianoVoices.set(id, voice);
+    ringingByNote.set(absSemi, voice);
+
+    // clean up the graph once this voice's oscillators actually finish,
+    // rather than leaving disconnected-but-still-referenced nodes around
+    osc1.onended = () => {
+      try { osc1.disconnect(); osc2.disconnect(); filter.disconnect(); gain.disconnect(); } catch (e) {}
+      if (ringingByNote.get(absSemi) === voice) ringingByNote.delete(absSemi);
+    };
+  }
+
+  function stopPianoVoice(id) {
+    const v = pianoVoices.get(id);
+    if (!v || !ctx) return;
+    const now = ctx.currentTime;
+    // damper falling — faster than the natural decay above
+    v.gain.gain.cancelScheduledValues(now);
+    v.gain.gain.setTargetAtTime(0, now, 0.15);
+    v.osc1.stop(now + 0.6);
+    v.osc2.stop(now + 0.6);
+    pianoVoices.delete(id);
+  }
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // ---------- visuals ----------
+  const canvas = document.getElementById("surface");
+  const gctx = canvas.getContext("2d");
+  let W = 0, H = 0, DPR = 1;
+
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    gctx.setTransform(DPR,0,0,DPR,0,0);
+    if (state.appMode === "play") {
+      if (state.game.active && state.game.target) drawGameScreen();
+    } else {
+      renderScene();
+    }
+  }
+
+  function renderScene() {
+    if (state.rangeMode === "piano") {
+      if (!pianoLayout) computePianoLayout();
+      panOffsetPx = clamp(panOffsetPx, 0, Math.max(0, pianoLayout.totalWidth - W));
+      drawPianoKeyboard();
+    } else {
+      drawGradient();
+    }
+    drawNoteGuide(); // clears itself when not applicable
+  }
+
+  function colorForT(t) {
+    if (state.colorMode === "repeat") {
+      // chroma-circle mode: hue depends only on pitch class (note name),
+      // ignoring octave, so the same note always looks the same color —
+      // true no matter where the visible range is centered.
+      const { totalSemis, startAbs } = absSemiRange();
+      const absSemi = startAbs + t * totalSemis;
+      const pitchClass = ((absSemi % 12) + 12) % 12;
+      const hue = (pitchClass / 12) * 360;
+      const relativeIndex = Math.floor((absSemi - startAbs) / 12);
+      const octaveNorm = state.octaves > 1 ? relativeIndex / (state.octaves - 1) : 0;
+      const lightness = 40 + octaveNorm * 20; // 40%..60%
+      return `hsl(${hue}, 70%, ${lightness}%)`;
+    }
+    // sweep mode: one continuous hue sweep across the whole pitch range,
+    // purely a function of screen position
+    const hue = t * 300;
+    return `hsl(${hue}, 68%, 52%)`;
+  }
+
+  function drawGradient() {
+    const steps = state.colorMode === "repeat" ? 200 : 64;
+    const grad = gctx.createLinearGradient(0, 0, W, 0);
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      grad.addColorStop(t, colorForT(t));
+    }
+    gctx.fillStyle = grad;
+    gctx.fillRect(0, 0, W, H);
+
+    // vertical darkening for the "brightness" axis (bottom = darker/muted)
+    const vgrad = gctx.createLinearGradient(0, 0, 0, H);
+    vgrad.addColorStop(0, "rgba(255,255,255,0.12)");
+    vgrad.addColorStop(0.5, "rgba(0,0,0,0)");
+    vgrad.addColorStop(1, "rgba(0,0,0,0.55)");
+    gctx.fillStyle = vgrad;
+    gctx.fillRect(0, 0, W, H);
+  }
+
+  // ---------- note guide overlay (switchable) ----------
+  const guideCanvas = document.getElementById("note-guide");
+  const ngctx = guideCanvas.getContext("2d");
+
+  function drawNoteGuide() {
+    guideCanvas.width = W * DPR;
+    guideCanvas.height = H * DPR;
+    guideCanvas.style.width = W + "px";
+    guideCanvas.style.height = H + "px";
+    ngctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ngctx.clearRect(0, 0, W, H);
+
+    if (!state.noteGuide || state.rangeMode === "piano") return;
+
+    const notes = getScaleNotesInRange();
+    if (notes.length === 0) return;
+    const { totalSemis, startAbs } = absSemiRange();
+    const pxFor = (absSemi) => ((absSemi - startAbs) / totalSemis) * W;
+
+    // key edges: the midpoint between each pair of neighboring notes —
+    // this is exactly the boundary where audio snapping actually flips
+    // from one note to the next, so the overlay always matches what
+    // you'll hear. The outermost edges just extend to the screen edge.
+    const edges = [startAbs];
+    for (let i = 0; i < notes.length - 1; i++) edges.push((notes[i] + notes[i + 1]) / 2);
+    edges.push(startAbs + totalSemis);
+
+    ngctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ngctx.lineWidth = 1;
+    ngctx.font = "600 13px -apple-system, sans-serif";
+    ngctx.textAlign = "center";
+    ngctx.textBaseline = "middle";
+
+    edges.forEach((absSemi) => {
+      const x = pxFor(absSemi);
+      ngctx.beginPath();
+      ngctx.moveTo(x, 0);
+      ngctx.lineTo(x, H);
+      ngctx.stroke();
+    });
+
+    // labels are drawn at each note's own exact pitch position (not the
+    // zone's midpoint), so e.g. C4 always sits precisely where C4 is
+    // heard, even though its zone is wider on one side than the other
+    const labelYs = [
+      Math.max(70, 24 + 40), // clears the gear button
+      H - 34
+    ];
+
+    notes.forEach((absSemi) => {
+      const cx = pxFor(absSemi);
+      const name = noteNameFromSemis(absSemi);
+
+      labelYs.forEach((cy) => {
+        const textW = ngctx.measureText(name).width;
+        const padX = 8, padY = 4;
+        const boxW = textW + padX * 2;
+        const boxH = 20;
+        ngctx.fillStyle = "rgba(0,0,0,0.32)";
+        roundRect(ngctx, cx - boxW / 2, cy - boxH / 2, boxW, boxH, 6);
+        ngctx.fill();
+        ngctx.fillStyle = "rgba(255,255,255,0.95)";
+        ngctx.fillText(name, cx, cy + 1);
+      });
+    });
+
+    // vertical pitch-bend reference: a center line for "no bend", plus
+    // the amount available at each extreme, so the effect isn't invisible
+    if (state.bendRange > 0) {
+      ngctx.setLineDash([5, 5]);
+      ngctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ngctx.beginPath();
+      ngctx.moveTo(0, H / 2);
+      ngctx.lineTo(W, H / 2);
+      ngctx.stroke();
+      ngctx.setLineDash([]);
+
+      ngctx.textAlign = "left";
+      ngctx.font = "600 10px -apple-system, sans-serif";
+      ngctx.fillStyle = "rgba(255,255,255,0.5)";
+      ngctx.fillText(`+${state.bendRange} st`, 8, 20);
+      ngctx.fillText(`0 st`, 8, H / 2 - 8);
+      ngctx.fillText(`\u2212${state.bendRange} st`, 8, H - 12);
+    }
+  }
+
+  function roundRect(c, x, y, w, h, r) {
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  }
+
+  // ---------- piano keyboard (white/black keys, replaces the gradient in "Full piano" mode) ----------
+  const WHITE_PC = new Set([0, 2, 4, 5, 7, 9, 11]);
+  const BLACK_PC = new Set([1, 3, 6, 8, 10]);
+  const WHITE_KEY_W = 46;
+  const BLACK_KEY_W = 28;
+  const SCRUB_H = 28; // thin navigation strip pinned to the bottom
+
+  let pianoLayout = null; // { whiteKeys, blackKeys, totalWidth }
+  let panOffsetPx = 0;
+
+  function computePianoLayout() {
+    const { totalSemis, startAbs } = absSemiRange(); // piano range: A0..C8
+    const endAbs = startAbs + totalSemis;
+    const whiteKeys = [];
+    const blackKeys = [];
+    let whiteCount = 0;
+    for (let absSemi = startAbs; absSemi <= endAbs; absSemi++) {
+      const pc = ((absSemi % 12) + 12) % 12;
+      if (WHITE_PC.has(pc)) {
+        whiteKeys.push({ absSemi, x: whiteCount * WHITE_KEY_W });
+        whiteCount++;
+      } else if (BLACK_PC.has(pc)) {
+        const boundaryX = whiteCount * WHITE_KEY_W;
+        blackKeys.push({ absSemi, x: boundaryX - BLACK_KEY_W / 2 });
+      }
+    }
+    pianoLayout = { whiteKeys, blackKeys, totalWidth: whiteCount * WHITE_KEY_W };
+  }
+
+  function keyXForAbsSemi(absSemi) {
+    if (!pianoLayout) return null;
+    const w = pianoLayout.whiteKeys.find(k => k.absSemi === absSemi);
+    if (w) return w.x + WHITE_KEY_W / 2;
+    const b = pianoLayout.blackKeys.find(k => k.absSemi === absSemi);
+    if (b) return b.x + BLACK_KEY_W / 2;
+    return null;
+  }
+
+  function centerPianoOnAbsSemi(absSemi) {
+    if (!pianoLayout) computePianoLayout();
+    const x = keyXForAbsSemi(absSemi);
+    if (x !== null) panOffsetPx = clamp(x - W / 2, 0, Math.max(0, pianoLayout.totalWidth - W));
+  }
+
+  function centerPianoOnC4() {
+    centerPianoOnAbsSemi(CENTER_ABS_SEMI);
+  }
+
+  function pianoKeyAt(x, y) {
+    if (!pianoLayout) return null;
+    if (y > H - SCRUB_H) return null; // that's the scrub strip, not a key
+    const realX = x + panOffsetPx;
+    const keyH = H - SCRUB_H;
+    if (y < keyH * 0.62) {
+      for (const bk of pianoLayout.blackKeys) {
+        if (realX >= bk.x && realX <= bk.x + BLACK_KEY_W) return bk.absSemi;
+      }
+    }
+    for (const wk of pianoLayout.whiteKeys) {
+      if (realX >= wk.x && realX <= wk.x + WHITE_KEY_W) return wk.absSemi;
+    }
+    return null;
+  }
+
+  function panFromScrubX(x) {
+    if (!pianoLayout) return 0;
+    const fraction = clamp(x / W, 0, 1);
+    const targetCenter = fraction * pianoLayout.totalWidth;
+    return clamp(targetCenter - W / 2, 0, Math.max(0, pianoLayout.totalWidth - W));
+  }
+
+  // ---------- Play mode: circular tap targets, timed, lives-based levels ----------
+  const LEVEL_ORDER = ["hotcross", "mary", "jingle", "twinkle", "ode", "frere"]; // easiest -> hardest
+  const GAME_OCTAVES = 3; // fixed range, centered on C4 — covers every built-in level
+  const GAME_WINDOW_MS = 1000;
+  const GAME_TARGET_RADIUS = 46;
+
+  function loadLevelNotes(songId) {
+    // chromatic by nature — Play mode always assumes every note is
+    // reachable, no scale-fitting needed. Trailing rests (used in Explore
+    // to leave a breath before looping) don't apply to a level that ends
+    // rather than loops, so they're simply dropped here.
+    const song = SONGS[songId];
+    if (!song) return [];
+    return song.notes.trim().split(/\s+/).map((tok) => {
+      const notePart = tok.split(":")[0];
+      if (notePart.toUpperCase() === "R") return null;
+      return parseNoteName(notePart);
+    }).filter(n => n !== null);
+  }
+
+  function gameXForNote(absSemi) {
+    const totalSemis = GAME_OCTAVES * 12;
+    const startAbs = CENTER_ABS_SEMI - totalSemis / 2;
+    const t = clamp((absSemi - startAbs) / totalSemis, 0, 1);
+    return (0.08 + t * 0.84) * W; // keep clear of the very edges
+  }
+
+  function randomGameY() {
+    const topMargin = 140;   // clears the HUD
+    const bottomMargin = 70;
+    return topMargin + Math.random() * Math.max(40, H - topMargin - bottomMargin);
+  }
+
+  function spawnNextTarget() {
+    const absSemi = state.game.notes[state.game.noteIndex];
+    state.game.target = { absSemi, x: gameXForNote(absSemi), y: randomGameY(), radius: GAME_TARGET_RADIUS };
+    state.game.windowStart = performance.now();
+    ensureGameLoop();
+  }
+
+  let gameAnimHandle = null;
+  function ensureGameLoop() {
+    if (gameAnimHandle !== null) return;
+    const tick = () => {
+      if (state.appMode !== "play" || !state.game.active) { gameAnimHandle = null; return; }
+      const elapsed = performance.now() - state.game.windowStart;
+      if (elapsed >= GAME_WINDOW_MS) {
+        registerMiss();
+      } else {
+        drawGameScreen();
+        gameAnimHandle = requestAnimationFrame(tick);
+      }
+    };
+    gameAnimHandle = requestAnimationFrame(tick);
+  }
+
+  function drawGameScreen() {
+    gctx.clearRect(0, 0, W, H);
+    gctx.fillStyle = "#0a0a0f";
+    gctx.fillRect(0, 0, W, H);
+    const t = state.game.target;
+    if (!t) return;
+    const elapsed = performance.now() - state.game.windowStart;
+    const frac = clamp(elapsed / GAME_WINDOW_MS, 0, 1);
+
+    const pc = ((t.absSemi % 12) + 12) % 12;
+    const hue = (pc / 12) * 360;
+
+    gctx.beginPath();
+    gctx.arc(t.x, t.y, t.radius, 0, Math.PI * 2);
+    gctx.fillStyle = `hsl(${hue}, 68%, 55%)`;
+    gctx.fill();
+
+    // depleting timer ring — starts as a full circle, shrinks clockwise
+    // toward nothing as the 1-second window runs out
+    gctx.beginPath();
+    gctx.arc(t.x, t.y, t.radius + 9, -Math.PI / 2, -Math.PI / 2 + (1 - frac) * Math.PI * 2);
+    gctx.strokeStyle = "rgba(255,255,255,0.85)";
+    gctx.lineWidth = 4;
+    gctx.stroke();
+
+    gctx.fillStyle = "rgba(255,255,255,0.95)";
+    gctx.font = "600 15px -apple-system, sans-serif";
+    gctx.textAlign = "center";
+    gctx.textBaseline = "middle";
+    gctx.fillText(noteNameFromSemis(t.absSemi), t.x, t.y);
+  }
+
+  function hitTestGameTarget(x, y) {
+    const t = state.game.target;
+    if (!t) return false;
+    const dx = x - t.x, dy = y - t.y;
+    return dx * dx + dy * dy <= t.radius * t.radius;
+  }
+
+  function registerHit() {
+    const t = state.game.target;
+    startPianoVoice("game-" + performance.now(), t.absSemi); // piano's own envelope decays on its own, no explicit stop needed
+    state.game.noteIndex++;
+    if (state.game.noteIndex >= state.game.notes.length) levelComplete();
+    else spawnNextTarget();
+  }
+
+  function registerMiss() {
+    state.game.lives--;
+    updateLivesUI();
+    if (state.game.lives <= 0) {
+      gameOver();
+      return;
+    }
+    state.game.noteIndex++;
+    if (state.game.noteIndex >= state.game.notes.length) levelComplete();
+    else spawnNextTarget();
+  }
+
+  function startLevel(index) {
+    state.game.levelIndex = index;
+    state.game.lives = 3;
+    state.game.notes = loadLevelNotes(LEVEL_ORDER[index]);
+    state.game.noteIndex = 0;
+    state.game.active = true;
+    hideGameOverlay();
+    updateLivesUI();
+    updateLevelNameUI();
+    spawnNextTarget();
+  }
+
+  function levelComplete() {
+    state.game.active = false;
+    const nextIndex = state.game.levelIndex + 1;
+    if (nextIndex >= LEVEL_ORDER.length) {
+      showGameOverlay("\u{1F3C6} You beat the game!", `Cleared all ${LEVEL_ORDER.length} levels`, "Play Again", () => startLevel(0));
+    } else {
+      const name = SONGS[LEVEL_ORDER[state.game.levelIndex]].name;
+      showGameOverlay("\u2705 Level Complete!", name, "Next Level", () => startLevel(nextIndex));
+    }
+  }
+
+  function gameOver() {
+    state.game.active = false;
+    const name = SONGS[LEVEL_ORDER[state.game.levelIndex]].name;
+    showGameOverlay("Game Over", name, "Retry", () => startLevel(state.game.levelIndex));
+  }
+
+  function updateLivesUI() {
+    const el = document.getElementById("game-lives");
+    el.innerHTML = "";
+    for (let i = 0; i < 3; i++) {
+      const dot = document.createElement("div");
+      dot.className = "life" + (i >= state.game.lives ? " lost" : "");
+      el.appendChild(dot);
+    }
+  }
+
+  function updateLevelNameUI() {
+    const song = SONGS[LEVEL_ORDER[state.game.levelIndex]];
+    document.getElementById("game-level-name").textContent = `Level ${state.game.levelIndex + 1}: ${song.name}`;
+  }
+
+  function showGameOverlay(title, sub, btnText, onBtn) {
+    document.getElementById("game-overlay-title").textContent = title;
+    document.getElementById("game-overlay-sub").textContent = sub;
+    const btn = document.getElementById("game-overlay-btn");
+    btn.textContent = btnText;
+    btn.onclick = onBtn;
+    document.getElementById("game-overlay").classList.add("visible");
+  }
+
+  function hideGameOverlay() {
+    document.getElementById("game-overlay").classList.remove("visible");
+  }
+
+  function drawPianoKeyboard() {
+    if (!pianoLayout) computePianoLayout();
+    gctx.clearRect(0, 0, W, H);
+    gctx.fillStyle = "#0a0a0a";
+    gctx.fillRect(0, 0, W, H);
+
+    const keyH = H - SCRUB_H;
+    const activeNotes = new Set();
+    pianoVoices.forEach(v => activeNotes.add(v.absSemi));
+
+    // white keys, only the ones actually visible
+    gctx.textAlign = "center";
+    gctx.textBaseline = "alphabetic";
+    pianoLayout.whiteKeys.forEach((wk) => {
+      const x = wk.x - panOffsetPx;
+      if (x + WHITE_KEY_W < 0 || x > W) return;
+      const pressed = activeNotes.has(wk.absSemi);
+      gctx.fillStyle = pressed ? "#cfe8ff" : "#f5f5f2";
+      gctx.fillRect(x, 0, WHITE_KEY_W - 1, keyH);
+      gctx.strokeStyle = "rgba(0,0,0,0.25)";
+      gctx.lineWidth = 1;
+      gctx.strokeRect(x + 0.5, 0.5, WHITE_KEY_W - 2, keyH - 1);
+      if (state.noteGuide) {
+        gctx.fillStyle = "rgba(0,0,0,0.45)";
+        gctx.font = "500 11px -apple-system, sans-serif";
+        gctx.fillText(noteNameFromSemis(wk.absSemi), x + WHITE_KEY_W / 2, keyH - 14);
+      }
+    });
+
+    // black keys, drawn on top
+    const blackH = keyH * 0.62;
+    pianoLayout.blackKeys.forEach((bk) => {
+      const x = bk.x - panOffsetPx;
+      if (x + BLACK_KEY_W < 0 || x > W) return;
+      const pressed = activeNotes.has(bk.absSemi);
+      gctx.fillStyle = pressed ? "#5b8fc9" : "#161616";
+      gctx.fillRect(x, 0, BLACK_KEY_W, blackH);
+      gctx.strokeStyle = "rgba(0,0,0,0.5)";
+      gctx.strokeRect(x + 0.5, 0.5, BLACK_KEY_W - 1, blackH - 1);
+      if (state.noteGuide && BLACK_KEY_W >= 22) {
+        gctx.fillStyle = "rgba(255,255,255,0.75)";
+        gctx.font = "500 9px -apple-system, sans-serif";
+        gctx.fillText(noteNameFromSemis(bk.absSemi), x + BLACK_KEY_W / 2, blackH - 10);
+      }
+    });
+
+    // scrub / navigation strip
+    const scrubY = H - SCRUB_H;
+    gctx.fillStyle = "rgba(255,255,255,0.06)";
+    gctx.fillRect(0, scrubY, W, SCRUB_H);
+    const viewW = Math.max(10, (W / pianoLayout.totalWidth) * W);
+    const viewX = (panOffsetPx / pianoLayout.totalWidth) * W;
+    gctx.fillStyle = "rgba(255,255,255,0.3)";
+    roundRect(gctx, viewX, scrubY + 4, viewW, SCRUB_H - 8, 3);
+    gctx.fill();
+  }
+
+  // ---------- touch readouts ----------
+  const overlay = document.getElementById("overlay");
+  const readouts = new Map(); // pointerId -> element
+
+  function makeReadout(id) {
+    const el = document.createElement("div");
+    el.className = "readout";
+    el.innerHTML = `<div class="ring"></div><div class="note"></div><div class="hz"></div>`;
+    overlay.appendChild(el);
+    readouts.set(id, el);
+    return el;
+  }
+
+  function updateReadout(id, x, y, semis, freq) {
+    let el = readouts.get(id);
+    if (!el) el = makeReadout(id);
+    el.style.left = x + "px";
+    el.style.top = y + "px";
+    el.querySelector(".note").textContent = noteNameFromSemis(semis);
+    el.querySelector(".hz").textContent = Math.round(freq) + " Hz";
+  }
+
+  function removeReadout(id) {
+    const el = readouts.get(id);
+    if (el) { el.remove(); readouts.delete(id); }
+  }
+
+  // ---------- pointer handling ----------
+  const hint = document.getElementById("hint");
+  let hintShown = true;
+
+  function hideHint() {
+    if (!hintShown) return;
+    hintShown = false;
+    hint.style.opacity = "0";
+  }
+
+  const scrubbingPointers = new Set();
+  const pointerLastPos = new Map(); // pointerId -> last {x,y}, for the jitter guard
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("#panel") || e.target.closest("#gear") || e.target.closest("#mode-switch") || e.target.closest("#game-overlay")) return;
+
+    if (state.appMode === "play") {
+      if (!state.game.active || !state.game.target) return;
+      if (hitTestGameTarget(e.clientX, e.clientY)) registerHit();
+      return;
+    }
+
+    hideHint();
+    canvas.setPointerCapture(e.pointerId);
+
+    if (state.rangeMode === "piano") {
+      if (e.clientY > H - SCRUB_H) {
+        scrubbingPointers.add(e.pointerId);
+        panOffsetPx = panFromScrubX(e.clientX);
+        drawPianoKeyboard();
+        return;
+      }
+      const absSemi = pianoKeyAt(e.clientX, e.clientY);
+      if (absSemi === null) return;
+      pointerLastPos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      startPianoVoice(e.pointerId, absSemi);
+      const freq = C0_FREQ * Math.pow(2, absSemi / 12);
+      updateReadout(e.pointerId, e.clientX, e.clientY, absSemi, freq);
+      drawPianoKeyboard();
+      return;
+    }
+
+    startVoice(e.pointerId, e.clientX, e.clientY, W, H);
+    const { freq, absSemi } = pitchFromXY(e.clientX, e.clientY, W, H);
+    updateReadout(e.pointerId, e.clientX, e.clientY, absSemi, freq);
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    if (state.appMode === "play") return; // Play mode is tap-only, no drag/glide
+
+    if (state.rangeMode === "piano") {
+      if (scrubbingPointers.has(e.pointerId)) {
+        panOffsetPx = panFromScrubX(e.clientX);
+        drawPianoKeyboard();
+        return;
+      }
+      if (!pianoVoices.has(e.pointerId)) return;
+      // Touchscreen contacts jitter by a pixel or two even when the finger
+      // is held still. Require real movement before treating this as a
+      // deliberate slide to a new key — otherwise jitter can retrigger the
+      // voice and cut the note short.
+      const last = pointerLastPos.get(e.pointerId);
+      if (last) {
+        const dx = e.clientX - last.x, dy = e.clientY - last.y;
+        if (dx * dx + dy * dy < 9) return; // < 3px, treat as stationary
+      }
+      pointerLastPos.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      const current = pianoVoices.get(e.pointerId).absSemi;
+      const absSemi = pianoKeyAt(e.clientX, e.clientY);
+      if (absSemi === null) return;
+      if (absSemi !== current) {
+        stopPianoVoice(e.pointerId);
+        startPianoVoice(e.pointerId, absSemi);
+        drawPianoKeyboard();
+      }
+      const freq = C0_FREQ * Math.pow(2, absSemi / 12);
+      updateReadout(e.pointerId, e.clientX, e.clientY, absSemi, freq);
+      return;
+    }
+
+    if (!voices.has(e.pointerId)) return;
+    updateVoice(e.pointerId, e.clientX, e.clientY, W, H);
+    const { freq, absSemi } = pitchFromXY(e.clientX, e.clientY, W, H);
+    updateReadout(e.pointerId, e.clientX, e.clientY, absSemi, freq);
+  });
+
+  function endPointer(e) {
+    if (state.appMode === "play") return;
+    pointerLastPos.delete(e.pointerId);
+    if (scrubbingPointers.has(e.pointerId)) {
+      scrubbingPointers.delete(e.pointerId);
+      return;
+    }
+    if (state.rangeMode === "piano") {
+      if (pianoVoices.has(e.pointerId)) {
+        stopPianoVoice(e.pointerId);
+        drawPianoKeyboard();
+      }
+      removeReadout(e.pointerId);
+      return;
+    }
+    stopVoice(e.pointerId);
+    removeReadout(e.pointerId);
+  }
+  canvas.addEventListener("pointerup", endPointer);
+  canvas.addEventListener("pointercancel", endPointer);
+  canvas.addEventListener("pointerleave", (e) => {
+    // only end if it's not a hovering mouse without button pressed
+    if (voices.has(e.pointerId) || pianoVoices.has(e.pointerId) || scrubbingPointers.has(e.pointerId)) endPointer(e);
+  });
+
+  // ---------- panel UI ----------
+  const gear = document.getElementById("gear");
+  const panel = document.getElementById("panel");
+  gear.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    panel.classList.toggle("open");
+  });
+
+  function wireSegmented(id, key, onChange) {
+    const seg = document.getElementById(id);
+    seg.querySelectorAll("button").forEach(btn => {
+      btn.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        seg.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        state[key] = btn.dataset.v;
+        if (onChange) onChange();
+      });
+    });
+  }
+  wireSegmented("wave-seg", "waveform");
+  wireSegmented("color-seg", "colorMode", drawGradient);
+
+  function applyModeAvailability() {
+    const isPiano = state.rangeMode === "piano";
+    setRowEnabled("wave-row", !isPiano);
+    setRowEnabled("snap-row", !isPiano);
+    setRowEnabled("color-row", !isPiano);
+    setRowEnabled("bend-row", !isPiano);
+    setRowEnabled("range-row", !isPiano);
+    setRowEnabled("scale-row", !isPiano && state.snap);
+  }
+  function setRowEnabled(id, enabled) {
+    const el = document.getElementById(id);
+    el.style.opacity = enabled ? "1" : "0.35";
+    el.style.pointerEvents = enabled ? "auto" : "none";
+  }
+
+  function onRangeModeChanged() {
+    applyModeAvailability();
+    if (state.rangeMode === "piano") {
+      computePianoLayout();
+      centerPianoOnC4();
+    }
+    renderScene();
+    updateRangeLabel();
+  }
+  wireSegmented("rangemode-seg", "rangeMode", onRangeModeChanged);
+
+  function setRangeMode(mode) {
+    // programmatic equivalent of clicking the Range mode segmented control —
+    // used by Song mode, which requires piano mode to function
+    if (state.rangeMode === mode) return;
+    const seg = document.getElementById("rangemode-seg");
+    seg.querySelectorAll("button").forEach(b => b.classList.toggle("active", b.dataset.v === mode));
+    state.rangeMode = mode;
+    onRangeModeChanged();
+  }
+
+  const scaleSelect = document.getElementById("scale-select");
+  scaleSelect.addEventListener("change", (e) => {
+    state.scale = e.target.value;
+    renderScene();
+  });
+  scaleSelect.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+  const snapSwitch = document.getElementById("snap-switch");
+  snapSwitch.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    state.snap = !state.snap;
+    snapSwitch.classList.toggle("on", state.snap);
+    applyModeAvailability();
+    drawGradient();
+  });
+
+  const guideSwitch = document.getElementById("guide-switch");
+  guideSwitch.addEventListener("pointerdown", (e) => {
+    e.stopPropagation();
+    state.noteGuide = !state.noteGuide;
+    guideSwitch.classList.toggle("on", state.noteGuide);
+    renderScene();
+  });
+
+  Object.keys(EFFECT_CONFIG).forEach((name) => {
+    const el = document.getElementById(`fx-${name}-switch`);
+    el.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      state.effects[name] = !state.effects[name];
+      el.classList.toggle("on", state.effects[name]);
+      if (ctx && fx[name]) fx[name].setOn(state.effects[name], EFFECT_CONFIG[name].wet);
+      // if audio hasn't started yet, ensureAudio() will read state.effects
+      // and apply this correctly once the chain is actually built
+    });
+  });
+
+  document.getElementById("range-slider").addEventListener("input", (e) => {
+    state.octaves = parseInt(e.target.value, 10);
+    renderScene();
+    updateRangeLabel();
+  });
+  document.getElementById("range-slider").addEventListener("pointerdown", (e) => e.stopPropagation());
+
+  document.getElementById("bend-slider").addEventListener("input", (e) => {
+    state.bendRange = parseInt(e.target.value, 10);
+    updateBendLabel();
+    drawNoteGuide();
+  });
+  document.getElementById("bend-slider").addEventListener("pointerdown", (e) => e.stopPropagation());
+
+  document.getElementById("vol-slider").addEventListener("input", (e) => {
+    state.volume = parseFloat(e.target.value);
+    if (masterGain) masterGain.gain.setTargetAtTime(state.volume, ctx.currentTime, 0.05);
+  });
+  document.getElementById("vol-slider").addEventListener("pointerdown", (e) => e.stopPropagation());
+
+  panel.addEventListener("pointerdown", (e) => e.stopPropagation());
+
+  // close panel when tapping the surface
+  canvas.addEventListener("pointerdown", () => {
+    if (panel.classList.contains("open")) panel.classList.remove("open");
+  }, { capture: true });
+
+  function updateRangeLabel() {
+    const { totalSemis, startAbs } = absSemiRange();
+    const lo = noteNameFromSemis(startAbs);
+    const hi = noteNameFromSemis(startAbs + totalSemis);
+    const count = getScaleNotesInRange().length;
+    document.getElementById("range-label").textContent = `${lo} \u2013 ${hi} \u00b7 ${count} notes in scale`;
+  }
+
+  function updateBendLabel() {
+    const semis = state.bendRange;
+    const el = document.getElementById("bend-label");
+    if (semis === 0) { el.textContent = "off"; return; }
+    const octaves = semis / 12;
+    const octLabel = Number.isInteger(octaves) ? `${octaves} oct` : `${octaves.toFixed(2)} oct`;
+    el.textContent = `\u00b1${semis} semitones (\u00b1${octLabel})`;
+  }
+
+  // ---------- top-level mode switcher ----------
+  document.querySelectorAll("#mode-switch button").forEach((btn) => {
+    btn.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      document.querySelectorAll("#mode-switch button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.appMode = btn.dataset.mode;
+
+      const isPlay = state.appMode === "play";
+      document.getElementById("game-hud").classList.toggle("visible", isPlay);
+      document.getElementById("gear").style.display = isPlay ? "none" : "flex";
+      document.getElementById("hint").style.display = isPlay ? "none" : "";
+      if (panel.classList.contains("open")) panel.classList.remove("open");
+
+      if (isPlay) {
+        startLevel(state.game.levelIndex);
+      } else {
+        state.game.active = false;
+        hideGameOverlay();
+        renderScene();
+      }
+    });
+  });
+
+  // ---------- boot ----------
+  window.addEventListener("resize", resize);
+  applyModeAvailability();
+  resize();
+  updateRangeLabel();
+  updateBendLabel();
+})();
+</script>
+
+</body>
+</html>
